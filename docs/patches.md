@@ -6,7 +6,7 @@ Documentation for Q3 IDE patches applied on top of VS Code.
 
 ## fix-policies
 
-**Replace `@vscode/policy-watcher` with `@q3ide/policy-watcher`**
+**Replace `@vscode/policy-watcher` with `@vscodium/policy-watcher`**
 
 VS Code uses `@vscode/policy-watcher` to enforce Group Policy Objects (GPOs) on
 Windows. That package reads from:
@@ -15,7 +15,7 @@ Windows. That package reads from:
 HKLM\SOFTWARE\Policies\Microsoft\<productName>
 ```
 
-Q3 IDE forks this into `@q3ide/policy-watcher`, which takes a separate
+Q3 IDE forks this into `@vscodium/policy-watcher`, which takes a separate
 `vendorName` argument. The `createWatcher()` call becomes:
 
 ```ts

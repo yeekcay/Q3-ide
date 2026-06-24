@@ -88,7 +88,7 @@ If you are under Wayland:
 
 ### <a id="windows-gpo"></a>_Group Policy Objects (GPOs) are ignored_
 
-Q3 IDE uses its own policy-watcher library (`@q3ide/policy-watcher`) which reads GPO values from a **different registry path** than VS Code.
+Q3 IDE uses its own policy-watcher library (`@vscodium/policy-watcher`) which reads GPO values from a **different registry path** than VS Code.
 
 **Q3 IDE reads policies from:**
 
