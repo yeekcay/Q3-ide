@@ -1,0 +1,45 @@
+# Build artifacts
+out/
+out-build/
+out-vscode/
+out-vscode-min/
+*.zip
+*.tar.gz
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# Dependencies
+node_modules/
+node_modules-gpu/
+
+# Model weights (large, user-provided)
+*.gguf
+models/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+
+# Test artifacts
+coverage/
+.vscode-test/
