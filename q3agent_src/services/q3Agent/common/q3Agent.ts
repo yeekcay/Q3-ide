@@ -46,6 +46,7 @@ export interface IQ3ChatMessage {
 	content: string;
 	toolCalls?: IQ3ToolCall[];
 	toolCallId?: string;
+	toolName?: string;
 }
 
 export interface IQ3ToolCall {

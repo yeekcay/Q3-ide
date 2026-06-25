@@ -47,3 +47,13 @@ else
 fi
 
 echo "[q3agent] Done."
+
+# Fix .moduleignore: wrong filename for vscodium-policy-watcher.node
+MODULE_IGNORE="${VSCODE_DIR}/build/.moduleignore"
+if [[ -f "${MODULE_IGNORE}" ]]; then
+  if grep -q "vscode-policy-watcher.node" "${MODULE_IGNORE}"; then
+    echo "[q3agent] Fixing .moduleignore: vscode-policy-watcher.node -> vscodium-policy-watcher.node..."
+    sed -i 's/vscode-policy-watcher.node/vscodium-policy-watcher.node/' "${MODULE_IGNORE}"
+    echo "[q3agent] .moduleignore fixed."
+  fi
+fi

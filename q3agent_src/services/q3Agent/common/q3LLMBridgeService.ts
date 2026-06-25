@@ -6,7 +6,12 @@
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IRequestService } from '../../../../platform/request/common/request.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { streamToBuffer } from '../../../../base/common/buffer.js';
 import { IQ3LLMBridgeService, IQ3ChatMessage, IQ3ToolDefinition, IQ3ToolCall, IQ3LLMResponse } from './q3Agent.js';
+
+const DEFAULT_LLM_ENDPOINT = 'http://127.0.0.1:11434';
 
 export class Q3LLMBridgeService extends Disposable implements IQ3LLMBridgeService {
 	declare readonly _serviceBrand: undefined;
@@ -15,12 +20,13 @@ export class Q3LLMBridgeService extends Disposable implements IQ3LLMBridgeServic
 
 	constructor(
 		@IConfigurationService private readonly _configService: IConfigurationService,
+		@IRequestService private readonly _requestService: IRequestService,
 	) {
 		super();
 	}
 
 	private getEndpoint(): string {
-		return this._configService.getValue<string>('q3.agent.endpoint') || 'http://localhost:11434';
+		return this._configService.getValue<string>('q3.agent.endpoint') || DEFAULT_LLM_ENDPOINT;
 	}
 
 	cancel(): void {
@@ -44,17 +50,8 @@ export class Q3LLMBridgeService extends Disposable implements IQ3LLMBridgeServic
 			body.tools = tools;
 		}
 
-		const resp = await fetch(`${this.getEndpoint()}/api/chat`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		});
-
-		if (!resp.ok) {
-			throw new Error(`Ollama API error: ${resp.status} ${resp.statusText}`);
-		}
-
-		const data = await resp.json() as any;
+		const respText = await this._request(`${this.getEndpoint()}/api/chat`, JSON.stringify(body));
+		const data = JSON.parse(respText) as any;
 		return {
 			content: data.message?.content || '',
 			toolCalls: (data.message?.tool_calls || []).map((tc: any) => ({
@@ -75,11 +72,29 @@ export class Q3LLMBridgeService extends Disposable implements IQ3LLMBridgeServic
 			model,
 			messages: messages.map(m => {
 				const msg: any = { role: m.role, content: m.content };
-				if (m.toolCalls) {
-					msg.tool_calls = m.toolCalls;
+				if (m.toolCalls && m.toolCalls.length > 0) {
+					msg.tool_calls = m.toolCalls.map(tc => {
+						let args: any;
+						try {
+							args = JSON.parse(tc.function.arguments);
+						} catch {
+							args = {};
+						}
+						return {
+							id: tc.id,
+							type: tc.type,
+							function: {
+								name: tc.function.name,
+								arguments: args,
+							},
+						};
+					});
 				}
 				if (m.toolCallId) {
 					msg.tool_call_id = m.toolCallId;
+				}
+				if (m.toolName) {
+					msg.name = m.toolName;
 				}
 				return msg;
 			}),
@@ -91,63 +106,101 @@ export class Q3LLMBridgeService extends Disposable implements IQ3LLMBridgeServic
 			},
 		};
 
-		const resp = await fetch(`${this.getEndpoint()}/api/chat`, {
+		const url = `${this.getEndpoint()}/api/chat`;
+		const res = await fetch(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
 			signal: this._abortController.signal,
 		});
 
-		if (!resp.ok) {
-			throw new Error(`Ollama API error: ${resp.status} ${resp.statusText}`);
+		if (!res.ok) {
+			const errText = await res.text();
+			throw new Error(`Ollama API error: ${res.status} - ${errText}`);
 		}
 
-		const reader = resp.body?.getReader();
-		if (!reader) {
-			throw new Error('No response body');
-		}
-
+		const reader = res.body!.getReader();
 		const decoder = new TextDecoder();
-		let buffer = '';
 		let fullContent = '';
-		const toolCalls: IQ3ToolCall[] = [];
+		let toolCalls: IQ3ToolCall[] = [];
+		let lineBuffer = '';
 
-		while (true) {
+		for (;;) {
 			const { done, value } = await reader.read();
 			if (done) { break; }
 
-			buffer += decoder.decode(value, { stream: true });
-			const lines = buffer.split('\n');
-			buffer = lines.pop() || '';
+			lineBuffer += decoder.decode(value, { stream: true });
+			const lines = lineBuffer.split('\n');
+			lineBuffer = lines.pop() || '';
 
 			for (const line of lines) {
-				if (!line.trim()) { continue; }
+				const trimmed = line.trim();
+				if (!trimmed) { continue; }
 				try {
-					const chunk = JSON.parse(line) as any;
-					if (chunk.message?.content) {
-						fullContent += chunk.message.content;
-						onToken(chunk.message.content);
+					const data = JSON.parse(trimmed) as any;
+					if (data.message?.content) {
+						fullContent += data.message.content;
+						onToken(data.message.content);
 					}
-					if (chunk.message?.tool_calls) {
-						for (const tc of chunk.message.tool_calls) {
-							toolCalls.push({
-								id: tc.id || `call_${Date.now()}_${toolCalls.length}`,
-								type: 'function' as const,
-								function: {
-									name: tc.function?.name || '',
-									arguments: typeof tc.function?.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function?.arguments || {}),
-								},
-							});
-						}
+					if (data.message?.tool_calls) {
+						toolCalls = data.message.tool_calls.map((tc: any) => ({
+							id: tc.id || `call_${Date.now()}_${toolCalls.length}`,
+							type: 'function' as const,
+							function: {
+								name: tc.function?.name || '',
+								arguments: typeof tc.function?.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function?.arguments || {}),
+							},
+						}));
 					}
 				} catch {
-					// partial JSON, skip
+					// Partial JSON, ignore
 				}
+			}
+		}
+
+		// Process any remaining data
+		const trimmed = lineBuffer.trim();
+		if (trimmed) {
+			try {
+				const data = JSON.parse(trimmed) as any;
+				if (data.message?.content) {
+					fullContent += data.message.content;
+					onToken(data.message.content);
+				}
+				if (data.message?.tool_calls) {
+					toolCalls = data.message.tool_calls.map((tc: any) => ({
+						id: tc.id || `call_${Date.now()}_${toolCalls.length}`,
+						type: 'function' as const,
+						function: {
+							name: tc.function?.name || '',
+							arguments: typeof tc.function?.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function?.arguments || {}),
+						},
+					}));
+				}
+			} catch {
+				// Ignore
 			}
 		}
 
 		this._abortController = undefined;
 		return { content: fullContent, toolCalls };
+	}
+
+	private async _request(url: string, body: string): Promise<string> {
+		const context = await this._requestService.request({
+			url,
+			type: 'POST',
+			data: body,
+			headers: { 'Content-Type': 'application/json' },
+			callSite: 'q3agent',
+		}, CancellationToken.None);
+		if (context.res.statusCode && (context.res.statusCode < 200 || context.res.statusCode >= 300)) {
+			const buffer = await streamToBuffer(context.stream);
+			const errorBody = buffer.toString();
+			throw new Error(`Ollama API error: ${context.res.statusCode} - ${errorBody}`);
+		}
+		const buffer = await streamToBuffer(context.stream);
+		return buffer.toString();
 	}
 }
 

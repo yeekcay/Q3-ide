@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo/q3_logo.png" alt="Q3 IDE Logo" width="200">
+</p>
+
 # Q3 IDE
 
 A standalone, heavily modified VS Code fork with a deeply integrated offline AI agent powered by **Qwen 3 Coder**. No cloud dependencies  all inference runs locally.

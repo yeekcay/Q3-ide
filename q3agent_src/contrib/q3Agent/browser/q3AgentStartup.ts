@@ -11,6 +11,7 @@ import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQ3ModelService } from '../../../services/q3Agent/common/q3Agent.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 
 const DISMISSAL_KEY = 'q3agent.modelDisclaimerDismissed';
 
@@ -21,6 +22,7 @@ export class Q3AgentStartupContribution extends Disposable implements IWorkbench
 		@INotificationService private readonly _notificationService: INotificationService,
 		@IQ3ModelService private readonly _modelService: IQ3ModelService,
 		@IStorageService private readonly _storageService: IStorageService,
+		@ILogService private readonly _logService: ILogService,
 	) {
 		super();
 
@@ -29,9 +31,37 @@ export class Q3AgentStartupContribution extends Disposable implements IWorkbench
 		});
 	}
 
+	private async _tryStartOllama(): Promise<boolean> {
+		// First check if Ollama is already running via the model service (uses IRequestService, bypasses CSP)
+		if (await this._modelService.isOllamaRunning()) {
+			return true;
+		}
+
+		// Try to launch Ollama via protocol handler
+		try {
+			this._logService.info('[q3agent] Ollama not running, attempting to start...');
+			window.open('ollama://', '_blank');
+		} catch {
+			// ignore
+		}
+
+		// Wait and retry up to 5 times (5 seconds total)
+		for (let i = 0; i < 5; i++) {
+			await new Promise(resolve => setTimeout(resolve, 1000));
+			if (await this._modelService.isOllamaRunning()) {
+				this._logService.info('[q3agent] Ollama started successfully.');
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private async _checkModelsAndPrompt(): Promise<void> {
 		try {
-			const running = await this._modelService.isOllamaRunning();
+			let running = await this._modelService.isOllamaRunning();
+			if (!running) {
+				running = await this._tryStartOllama();
+			}
 			if (!running) {
 				this._notificationService.info(
 					nls.localize('q3agent.ollamaNotRunning',

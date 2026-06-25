@@ -84,6 +84,8 @@
 	color: var(--vscode-foreground);
 	word-wrap: break-word;
 	overflow-wrap: break-word;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .q3-agent-tool-label {
@@ -304,4 +306,30 @@
 	font-size: 10px;
 	color: var(--vscode-descriptionForeground);
 	white-space: nowrap;
+}
+
+.q3-agent-message-actions {
+	display: flex;
+	gap: 4px;
+	margin-top: 4px;
+	opacity: 0;
+	transition: opacity 0.2s;
+}
+
+.q3-agent-message-assistant:hover .q3-agent-message-actions {
+	opacity: 1;
+}
+
+.q3-agent-copy-button {
+	padding: 2px 8px;
+	font-size: 11px;
+	border: 1px solid var(--vscode-button-border, transparent);
+	border-radius: 2px;
+	cursor: pointer;
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+}
+
+.q3-agent-copy-button:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
 }

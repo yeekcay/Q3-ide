@@ -16,6 +16,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IQ3AgentService, IQ3AgentResponseChunk, IQ3ModelService } from '../../../services/q3Agent/common/q3Agent.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ITextModel } from '../../../../editor/common/model.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 
@@ -53,6 +54,7 @@ export class Q3AgentViewPane extends ViewPane {
 		@IQ3AgentService private readonly _agentService: IQ3AgentService,
 		@IQ3ModelService private readonly _modelService: IQ3ModelService,
 		@IEditorService private readonly _editorService: IEditorService,
+		@IWorkspaceContextService private readonly _workspaceService: IWorkspaceContextService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -152,7 +154,7 @@ export class Q3AgentViewPane extends ViewPane {
 	}
 
 	private _renderModelBrowser(): void {
-		this._modelBrowserEl.innerHTML = '';
+		this._modelBrowserEl.replaceChildren();
 
 		const presets = this._modelService.getModelPresets();
 
@@ -233,7 +235,7 @@ export class Q3AgentViewPane extends ViewPane {
 			} else {
 				const cloudLabel = document.createElement('span');
 				cloudLabel.classList.add('q3-agent-model-cloud-label');
-				cloudLabel.textContent = '☁ Cloud';
+				cloudLabel.textContent = 'â˜ Cloud';
 				actions.appendChild(cloudLabel);
 			}
 
@@ -245,11 +247,15 @@ export class Q3AgentViewPane extends ViewPane {
 	private async _refreshModels(): Promise<void> {
 		const running = await this._modelService.isOllamaRunning();
 		if (!running) {
-			this._modelSelector.innerHTML = '<option value="">Ollama not running</option>';
+			this._modelSelector.replaceChildren();
+			const notRunningOpt = document.createElement('option');
+			notRunningOpt.value = '';
+			notRunningOpt.textContent = 'Ollama not running';
+			this._modelSelector.appendChild(notRunningOpt);
 			return;
 		}
 		const models = await this._modelService.getModels();
-		this._modelSelector.innerHTML = '';
+		this._modelSelector.replaceChildren();
 		if (models.length === 0) {
 			const opt = document.createElement('option');
 			opt.value = '';
@@ -293,6 +299,12 @@ export class Q3AgentViewPane extends ViewPane {
 			}
 		}
 
+		// Add workspace root context
+		const workspace = this._workspaceService.getWorkspace();
+		if (workspace.folders.length > 0) {
+			context.workspaceRoot = workspace.folders[0].uri.fsPath;
+		}
+
 		this._agentService.send({ prompt: text, context });
 	}
 
@@ -324,28 +336,103 @@ export class Q3AgentViewPane extends ViewPane {
 
 		const textEl = document.createElement('div');
 		textEl.classList.add('q3-agent-message-text');
-		textEl.innerHTML = this._renderMarkdown(msg.content);
+		this._renderMarkdownInto(textEl, msg.content);
 		content.appendChild(textEl);
+
+		if (msg.role === 'assistant' && msg.content) {
+			const actions = document.createElement('div');
+			actions.classList.add('q3-agent-message-actions');
+			const copyBtn = document.createElement('button');
+			copyBtn.classList.add('q3-agent-copy-button');
+			copyBtn.textContent = 'Copy';
+			copyBtn.addEventListener('click', () => {
+				const textToCopy = msg.content;
+				navigator.clipboard.writeText(textToCopy).then(() => {
+					copyBtn.textContent = 'Copied!';
+					setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+				});
+			});
+			actions.appendChild(copyBtn);
+			content.appendChild(actions);
+		}
 
 		wrapper.appendChild(content);
 		return wrapper;
 	}
 
-	private _renderMarkdown(text: string): string {
-		let html = text
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;');
+	private _renderMarkdownInto(target: HTMLElement, text: string): void {
+		target.replaceChildren();
+		const parts = text.split(/```/);
+		for (let i = 0; i < parts.length; i++) {
+			if (i % 2 === 0) {
+				const lines = parts[i].split('\n');
+				for (let j = 0; j < lines.length; j++) {
+					if (j > 0) {
+						target.appendChild(document.createElement('br'));
+					}
+					this._renderInlineMarkdown(target, lines[j]);
+				}
+			} else {
+				const newlineIdx = parts[i].indexOf('\n');
+				const codeContent = newlineIdx >= 0 ? parts[i].substring(newlineIdx + 1) : parts[i];
+				const pre = document.createElement('pre');
+				pre.classList.add('q3-agent-code-block');
+				const code = document.createElement('code');
+				code.textContent = codeContent.trim();
+				pre.appendChild(code);
+				target.appendChild(pre);
+			}
+		}
+	}
 
-		html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-			return `<pre class="q3-agent-code-block"><code>${code.trim()}</code></pre>`;
-		});
+	private _renderInlineMarkdown(target: HTMLElement, text: string): void {
+		const parts = text.split(/`([^`]+)`/g);
+		for (let i = 0; i < parts.length; i++) {
+			if (i % 2 === 0) {
+				if (parts[i]) {
+					target.appendChild(document.createTextNode(parts[i]));
+				}
+			} else {
+				const code = document.createElement('code');
+				code.classList.add('q3-agent-inline-code');
+				code.textContent = parts[i];
+				target.appendChild(code);
+			}
+		}
+	}
 
-		html = html.replace(/`([^`]+)`/g, '<code class="q3-agent-inline-code">$1</code>');
+	private _finalizeStreamingMessage(): void {
+		if (!this._currentAssistantEl || !this._currentAssistantText) { return; }
 
-		html = html.replace(/\n/g, '<br>');
+		// Update the last message content
+		const lastMsg = this._messages[this._messages.length - 1];
+		if (lastMsg && lastMsg.role === 'assistant') {
+			lastMsg.content = this._currentAssistantText;
+		}
 
-		return html;
+		// Do final markdown render
+		const textEl = this._currentAssistantEl.querySelector('.q3-agent-message-text');
+		if (textEl) {
+			this._renderMarkdownInto(textEl as HTMLElement, this._currentAssistantText);
+		}
+
+		// Add copy button
+		const content = this._currentAssistantEl.querySelector('.q3-agent-message-content');
+		if (content && !content.querySelector('.q3-agent-message-actions')) {
+			const actions = document.createElement('div');
+			actions.classList.add('q3-agent-message-actions');
+			const copyBtn = document.createElement('button');
+			copyBtn.classList.add('q3-agent-copy-button');
+			copyBtn.textContent = 'Copy';
+			copyBtn.addEventListener('click', () => {
+				navigator.clipboard.writeText(this._currentAssistantText).then(() => {
+					copyBtn.textContent = 'Copied!';
+					setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+				});
+			});
+			actions.appendChild(copyBtn);
+			content.appendChild(actions);
+		}
 	}
 
 	private _handleChunk(chunk: IQ3AgentResponseChunk): void {
@@ -360,10 +447,11 @@ export class Q3AgentViewPane extends ViewPane {
 			this._currentAssistantText += chunk.content || '';
 			const textEl = this._currentAssistantEl.querySelector('.q3-agent-message-text');
 			if (textEl) {
-				textEl.innerHTML = this._renderMarkdown(this._currentAssistantText);
+				textEl.textContent = this._currentAssistantText;
 			}
 			this._chatContainer.scrollTop = this._chatContainer.scrollHeight;
 		} else if (chunk.type === 'tool_call') {
+			this._finalizeStreamingMessage();
 			this._currentAssistantEl = undefined;
 
 			const msg: ChatMessage = {
@@ -380,8 +468,10 @@ export class Q3AgentViewPane extends ViewPane {
 			};
 			this._addMessage(msg);
 		} else if (chunk.type === 'done') {
+			this._finalizeStreamingMessage();
 			this._currentAssistantEl = undefined;
 		} else if (chunk.type === 'error') {
+			this._finalizeStreamingMessage();
 			this._currentAssistantEl = undefined;
 			this._addMessage({ role: 'assistant', content: `Error: ${chunk.error}` });
 		}

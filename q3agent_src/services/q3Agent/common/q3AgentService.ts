@@ -14,25 +14,14 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IQ3AgentService, IQ3AgentRequest, IQ3AgentResponseChunk, IQ3ChatMessage, IQ3ToolDefinition, IQ3ToolCall, IQ3LLMBridgeService, IQ3ModelService } from './q3Agent.js';
 
-const SYSTEM_PROMPT = `You are Q3 IDE's built-in AI coding assistant, powered by Qwen 3 Coder running locally via Ollama.
-You help users with coding tasks: writing code, debugging, refactoring, explaining code, and running commands.
-
-You have access to tools that let you interact with the user's workspace:
-- read_file: Read the contents of a file
-- list_dir: List directory contents
-- apply_edit: Apply an edit to a file (old_string -> new_string replacement)
-- run_command: Run a shell command and return its output
-
-When the user asks you to do something that requires file access or running commands, use the appropriate tool.
-Always explain what you're doing before using a tool. After getting tool results, summarize what you found.
-Keep responses concise and focused. Use code blocks for code suggestions.`;
+const SYSTEM_PROMPT = `You are a coding assistant with tools. To analyze a project, call list_dir('.') first, then read key files. Never describe tool calls in text - always call them. Use relative paths from the workspace root.`;
 
 const TOOLS: IQ3ToolDefinition[] = [
 	{
 		type: 'function',
 		function: {
 			name: 'read_file',
-			description: 'Read the contents of a file at the given path',
+			description: 'Read the contents of a file at the given path. Use a relative path from the workspace root, e.g. "src/main.ts".',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -46,7 +35,7 @@ const TOOLS: IQ3ToolDefinition[] = [
 		type: 'function',
 		function: {
 			name: 'list_dir',
-			description: 'List the contents of a directory',
+			description: 'List the contents of a directory. Use "." for the workspace root, or a relative path like "src/components".',
 			parameters: {
 				type: 'object',
 				properties: {
@@ -145,7 +134,7 @@ export class Q3AgentService extends Disposable implements IQ3AgentService {
 					messages,
 					TOOLS,
 					{
-						temperature: this._configService.getValue<number>('q3.agent.temperature') ?? 0.7,
+						temperature: this._configService.getValue<number>('q3.agent.temperature') ?? 0,
 						maxTokens: this._configService.getValue<number>('q3.agent.maxTokens') ?? 4096,
 					},
 					(token: string) => {
@@ -180,6 +169,7 @@ export class Q3AgentService extends Disposable implements IQ3AgentService {
 						role: 'tool',
 						content: result,
 						toolCallId: toolCall.id,
+						toolName: toolCall.function.name,
 					};
 					this._conversationHistory.push(toolMsg);
 					messages.push(toolMsg);
@@ -291,6 +281,10 @@ export class Q3AgentService extends Disposable implements IQ3AgentService {
 	private resolvePath(path: string): URI {
 		if (path.startsWith('file://')) {
 			return URI.parse(path);
+		}
+		// Check if it's an absolute path (Windows drive letter like d:\ or C:/, or Unix /)
+		if (/^[a-zA-Z]:[\\\/]/.test(path) || path.startsWith('/')) {
+			return URI.file(path);
 		}
 		const workspace = this._workspaceService.getWorkspace();
 		if (workspace.folders.length > 0) {

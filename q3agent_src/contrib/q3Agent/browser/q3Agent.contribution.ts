@@ -24,10 +24,12 @@ const agentViewIcon = registerIcon('q3-agent-view-icon', Codicon.copilot, nls.lo
 const VIEW_CONTAINER: ViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
 	id: Q3_AGENT_VIEW_ID,
 	title: nls.localize2('q3Agent', 'Q3 Agent'),
+	icon: agentViewIcon,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [Q3_AGENT_VIEW_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	storageId: Q3_AGENT_VIEW_ID,
 	hideIfEmpty: false,
-}, ViewContainerLocation.Sidebar);
+	order: 1,
+}, ViewContainerLocation.AuxiliaryBar);
 
 Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsRegistry).registerViews([{
 	id: 'workbench.q3Agent',
@@ -64,13 +66,13 @@ configurationRegistry.registerConfiguration({
 		},
 		'q3.agent.endpoint': {
 			type: 'string',
-			default: 'http://localhost:11434',
+			default: 'http://127.0.0.1:11434',
 			description: nls.localize('q3.agent.endpoint', 'The Ollama API endpoint URL.'),
 			scope: ConfigurationScope.APPLICATION,
 		},
 		'q3.agent.temperature': {
 			type: 'number',
-			default: 0.7,
+			default: 0,
 			minimum: 0,
 			maximum: 2,
 			description: nls.localize('q3.agent.temperature', 'Temperature for LLM generation (0=deterministic, 2=creative).'),
